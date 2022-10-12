@@ -7,8 +7,16 @@ import traceback
 from win32file import CreateFile, SetFileTime, GetFileTime, CloseHandle
 from win32file import GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING
 from pywintypes import Time
+from email.message import Message
 import time
+import hashlib
 
+req = requests.Session()
+
+def printProgress(message):
+    global printMaxChar
+    printMaxChar = max(printMaxChar, len(message))
+    print(('\r' + message).ljust(printMaxChar + 4), end='')
 
 class yikeENV():
     def __init__(self, cookies, bdstoken, limit=100):
@@ -16,7 +24,7 @@ class yikeENV():
         self.bdstoken = str(bdstoken)
         self.limit = limit
         self.ua = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"}
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36 Edg/106.0.1370.30"}
         self.s = {
             'videos': '1102',
             'gifs': '1103',
@@ -37,7 +45,7 @@ class yikeENV():
         l = []
         i = 0
         while True:
-            tmp = requests.get(url + self.__cursor__(i, self.limit),
+            tmp = req.get(url + self.__cursor__(i, self.limit),
                                cookies=self.cookies, headers=self.ua).json()['list']
             if tmp == []:
                 break
@@ -48,15 +56,19 @@ class yikeENV():
             result.append(yikePhoto(i, self.cookies, self.bdstoken))
         return result
 
-    def __list__(self, method):
+    def __list__(self, method, extra = ""):
         url = 'https://photo.baidu.com/youai/file/v1/' + method + '?' \
             + 'clienttype=70' \
-            + '&bdstoken=' + self.bdstoken
+            + '&bdstoken=' + self.bdstoken \
+            + extra
         l = []
         i = 0
         while True:
-            tmp = requests.get(url + self.__cursor__(i, self.limit),
-                               cookies=self.cookies, headers=self.ua).json()['list']
+            result = req.get(url + self.__cursor__(i, self.limit),
+                            cookies=self.cookies, headers=self.ua).json()
+            if 'list' not in result: # r['errno'] == 2, no more result
+                break
+            tmp = result['list']
             if tmp == []:
                 break
             l += tmp
@@ -78,7 +90,7 @@ class yikeENV():
                 tmp = fsid_list[:500:]
                 fsid_list = fsid_list[500::]
                 while (True):
-                    r = requests.get(
+                    r = req.get(
                     url + str(tmp).replace(' ', '').replace('\'', ''), cookies=self.cookies, headers=self.ua).json()
                     if r['errno'] == 0:
                         break
@@ -88,7 +100,7 @@ class yikeENV():
             else:
                 tmp = fsid_list
                 while (True):
-                    r = requests.get(
+                    r = req.get(
                     url + str(tmp).replace(' ', '').replace('\'', ''), cookies=self.cookies, headers=self.ua).json()
                     if r['errno'] == 0:
                         break
@@ -112,6 +124,9 @@ class yikeENV():
     def getrecycled(self):
         return self.__list__('listrecycle')
 
+    def listrecent(self):
+        return self.__list__('listrecent', '&need_thumbnail=1&sort_field=ctime')
+
     def delete(self, list):
         return self.__fo__('delete', list)
 
@@ -125,7 +140,7 @@ class yikeENV():
         url = 'https://photo.baidu.com/youai/file/v1/clearrecycle?' \
             + 'clienttype=70' \
             + '&bdstoken=' + self.bdstoken
-        return requests.get(url, cookies=self.cookies, headers=self.ua).json()
+        return req.get(url, cookies=self.cookies, headers=self.ua).json()
     
     def dlall(self, li, workdir):
         for i in li:
@@ -136,26 +151,37 @@ class yikePhoto:
     def __init__(self, js, cookies, bdstoken):
         self.fsid = str(js['fsid'])
         self.time = js['extra_info']['date_time'].replace('-',':')
+        self.ctime = js['ctime']
+        self.mtime = js['mtime']
+        #self.shoot_time = js['shoot_time']
         self.cookies = cookies
         self.bdstoken = str(bdstoken)
         self.ua = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_13_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36"}
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36 Edg/106.0.1370.30"}
 
     def __fo__(self, method):
         url = 'https://photo.baidu.com/youai/file/v1/' + method + '?' \
             + 'clienttype=70' \
             + '&bdstoken=' + self.bdstoken \
             + '&fsid_list=[' + self.fsid + ']'
-        return requests.get(url, cookies=self.cookies, headers=self.ua).json()
+        return req.get(url, cookies=self.cookies, headers=self.ua).json()
 
-    def __modifyFileTime__(self, filePath, cTime):
-        format = "%Y:%m:%d %H:%M:%S"
-        Time_t = time.localtime(time.mktime(time.strptime(cTime, '%Y:%m:%d %H:%M:%S')))
+    # old code in git history
+    def __modifyFileTime__(self, filePath):
+        ctime = time.localtime(self.ctime)
+        mtime = time.localtime(self.mtime)
         fh = CreateFile(filePath, GENERIC_READ | GENERIC_WRITE, 0, None, OPEN_EXISTING, 0, 0)
-        createTimes, accessTimes, modifyTimes = GetFileTime(fh)
-        T = Time(time.mktime(Time_t))
-        SetFileTime(fh, T, T, T)
-        CloseHandle(fh)
+        #createTimes, accessTimes, modifyTimes = GetFileTime(fh)
+        #T = Time(time.mktime(Time_t))
+        #SetFileTime(fh, T, T, T)
+        try:
+            SetFileTime(fh, Time(ctime), Time(mtime), Time(time.time())) # must be a pywintypes time object
+        except Exception as e:
+            print('[Error] __modifyFileTime__ for ' + filePath + ' to ' + time.strptime(mtime, '%Y:%m:%d %H:%M:%S'))
+            #print(traceback.format_exc())
+            raise
+        finally:
+            CloseHandle(fh)
 
     def delrecycle(self):
         return self.__fo__('delrecycle')
@@ -172,7 +198,7 @@ class yikePhoto:
                 + 'clienttype=70' \
                 + '&bdstoken=' + self.bdstoken \
                 + '&fsid=' + self.fsid
-            return requests.get(url, cookies=self.cookies, headers=self.ua).json()['dlink']
+            return req.get(url, cookies=self.cookies, headers=self.ua).json()['dlink']
         except Exception as e:
             print('[Error] Failed to get download link of photo with fsid ' + self.fsid)
             print(traceback.format_exc())
@@ -182,31 +208,54 @@ class yikePhoto:
             + 'clienttype=70' \
             + '&bdstoken=' + self.bdstoken \
             + '&fsid=' + self.fsid
-        return requests.get(url, cookies=self.cookies, headers=self.ua).json()
+        return req.get(url, cookies=self.cookies, headers=self.ua).json()
+
+    def __md5__(self, fname):
+        hash_md5 = hashlib.md5()
+        with open(fname,"rb") as f:
+            for chunk in iter(lambda :f.read(4096),b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
 
     def dl(self, workdir):
         try:
             url = self.getdl()
-            r = requests.get(url, stream=True, headers=self.ua)
+            r = req.get(url, stream=True, headers=self.ua)
             filename = ''
             if 'Content-Disposition' in r.headers and r.headers['Content-Disposition']:
-                disposition_split = r.headers['Content-Disposition'].split(';')
-                if len(disposition_split) > 1:
-                    if disposition_split[1].strip().lower().startswith('filename='):
-                        file_name = disposition_split[1].split('=')
-                        if len(file_name) > 1:
-                            filename = unquote(file_name[1])
+                m = Message()
+                m['Content-Disposition'] = r.headers['Content-Disposition']
+                file_name = m.get_param('filename', None, 'Content-Disposition')
+                if file_name:
+                    f = file_name.encode('ISO-8859-1').decode('utf8')
+                    filename = unquote(f)
             if not filename and os.path.basename(url):
                 filename = os.path.basename(url).split("?")[0]
             if not filename:
                 raise ValueError()
+            filename = filename.strip('"')
             filePath = workdir + filename
+            if(os.path.isfile(filePath) and 
+                'Content-Length' in r.headers and r.headers['Content-Length'] and
+                'Content-MD5' in r.headers and r.headers['Content-MD5']): # sometime KeyError: 'content-length'
+                if(os.path.getsize(filePath) != int(r.headers['Content-Length']) or 
+                    self.__md5__(filePath) != r.headers['Content-MD5']):
+                    filePath_ = os.path.splitext(filePath)
+                    oldFileNewPath = filePath_[0] + 'old.' + str(int(time.time())) + filePath_[1]
+                    os.rename(filePath, oldFileNewPath)
+                else:
+                    printProgress(os.path.basename(filePath) + ' already exists.')
+                    # self.__modifyFileTime__(filePath)
+                    return
+
             file = open(filePath, 'wb')
-            for i in r.iter_content(chunk_size=1024):
+            for i in r.iter_content(chunk_size=4096):
                 if i:
                     file.write(i)
             file.close()
-            self.__modifyFileTime__(filePath, self.time)
+            self.__modifyFileTime__(filePath)
+            printProgress(os.path.basename(filePath) + ' done.')
         except Exception as e:
-            print('[Error] Error downloading photo with fsid ' + self.fsid)
+            print('[Error] Error downloading photo with fsid ', self.fsid)
+            print('The file path: ', filePath)
             print(traceback.format_exc())
