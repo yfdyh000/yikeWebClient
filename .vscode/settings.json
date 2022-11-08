@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
         "yike"
-    ]
+    ],
+    "python.analysis.typeCheckingMode": "basic"
 }

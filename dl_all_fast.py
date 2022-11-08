@@ -1,20 +1,23 @@
 from cmath import inf
 from yike import *
 import concurrent.futures
+from threading import Lock
 
 CONNECTIONS = 3
 #TIMEOUT = 30
 
-def dl_sub(i, dldir):
+def dl_sub(i, dldir, lock):
     tagids = [tag['tag_id'] for tag in i.tags]
     if(1102 in tagids or 1103 in tagids): # 跳过特定标签的文件（例如已下载过）。
         return 0
+    i.lock = lock
     i.dl(dldir)
     return 1
 
 def bulk_sub(g, dldir):
+    lock = Lock() # TODO: 基于完整路径的互斥
     with concurrent.futures.ThreadPoolExecutor(max_workers=CONNECTIONS) as executor:
-        result = (executor.submit(dl_sub, i, dldir) for i in g)
+        result = (executor.submit(dl_sub, i, dldir, lock) for i in g)
         concurrent.futures.as_completed(result)
         for future in concurrent.futures.as_completed(result):
             if(future.result() < 0): # TODO?

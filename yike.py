@@ -11,6 +11,7 @@ from pywintypes import Time
 from email.message import Message
 import time
 import hashlib
+import json
 
 req = requests.Session()
 
@@ -178,6 +179,7 @@ class yikePhoto:
         self.bdstoken = str(bdstoken)
         self.ua = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36 Edg/106.0.1370.30"}
+        self.lock = None
 
     def __fo__(self, method):
         url = 'https://photo.baidu.com/youai/file/v1/' + method + '?' \
@@ -219,8 +221,15 @@ class yikePhoto:
                 + '&bdstoken=' + self.bdstoken \
                 + '&fsid=' + self.fsid
             resp = req.get(url, cookies=self.cookies, headers=self.ua)
+            if 'errno' in resp.text and json.loads(resp.text)['errno'] > 0:
+                if(json.loads(resp.text)['errno'] == 50007 and self.size > 1024*1024*100):
+                    # 50007 超过100MB的视频文件，下载需要会员
+                    print('\n[Server Error, Too large]', self.path, resp.text, self.size)
+                else:
+                    print('\n[Server Error]', self.path, resp.text, self.size)
+                return ''
             if not resp.ok or not 'dlink' in resp.text: # 网络故障或服务器限制
-                 raise KeyError
+                raise KeyError(resp.ok, resp.text)
                 #print('\n[Error]', resp.ok, resp.text)
                 #return ''
             return resp.json()['dlink']
@@ -244,10 +253,12 @@ class yikePhoto:
         return hash_md5.hexdigest()
 
     def dl(self, workdir):
+        filePath = ""
         try:
             url = self.getdl()
             if url == '':
-                raise KeyError
+                #raise ValueError
+                return
             r = req.get(url, stream=True, headers=self.ua)
             filename = ''
             if 'Content-Disposition' in r.headers and r.headers['Content-Disposition']:
@@ -261,38 +272,42 @@ class yikePhoto:
                 filename = os.path.basename(url).split("?")[0]
             if not filename:
                 raise ValueError()
-            if filename == "温馨提示.txt": # 已屏蔽。跳过，避免反复写入和多线程写入冲突
-                return
             filename = filename.strip('"')
+            if os.path.splitext(filename)[0] == "温馨提示": # 已屏蔽。"温馨提示.txt", "温馨提示.avi".
+                print('\n[Server Error, File blocked]', self.path, self.size) # 跳过，避免反复写入和多线程冲突
+                return
             filePath = os.path.abspath(os.path.join(workdir, filename))
+            self.lock.acquire() if self.lock != None else ... # 避免多线程操作同名文件
             if(os.path.isfile(filePath) and 
                 'Content-Length' in r.headers and r.headers['Content-Length'] and
                 'Content-MD5' in r.headers and r.headers['Content-MD5']): # sometime KeyError: 'content-length'
                 if(os.path.getsize(filePath) != int(r.headers['Content-Length']) or 
                     self.__md5__(filePath) != r.headers['Content-MD5']):
                     # 考虑避免误覆盖已有或已损坏文件。
-                    # 触发罕见。一刻服务器保存文件时可能会自动重命名同名文件。
+                    # 触发较少。可能一刻转存文件时会自动重命名同名文件。
                     # FIXME 多线程冲突的可能？
-                    # time.sleep(2) # 避免杀软占用
+                    #time.sleep(2) # 避免杀软占用
                     filePath_ = os.path.splitext(filePath)
-                    oldFileNewPath = filePath_[0] + '.old.' + str(int(time.time())) + filePath_[1]
+                    oldFileNewPath = filePath_[0] + '.old.' + str(int(round(time.time()*1000))) + filePath_[1]
                     os.rename(filePath, oldFileNewPath)
                 else:
                     printProgress(os.path.basename(filePath) + ' already exists.')
                     # self.__modifyFileTime__(filePath) # 禁用此行，如果不需强制更新文件时间
+                    self.lock.release() if self.lock != None else ...
                     return
-
             file = open(filePath, 'wb')
             for i in r.iter_content(chunk_size=4096):
                 if i:
                     file.write(i)
             file.close()
             self.__modifyFileTime__(filePath)
+            self.lock.release() if self.lock != None else ...
             printProgress(os.path.basename(filePath) + ' done.')
         except Exception as e:
             print('\n[Error] Error downloading photo with fsid ', self.fsid)
             #print('The file path:', filePath) # local variable 'filePath' referenced before assignment
             print(traceback.format_exc())
+            self.lock.release() if self.lock != None else ...
         except KeyboardInterrupt as e: # FIXME
             print('\n[Exit] Keyboard interrupt. The last file:', filePath, "The fsid:", self.fsid)
             sys.exit()
