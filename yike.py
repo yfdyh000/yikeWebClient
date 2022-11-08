@@ -2,6 +2,7 @@ import base64
 import requests
 import time
 import os
+import sys
 from urllib.parse import unquote
 import traceback
 from win32file import CreateFile, SetFileTime, GetFileTime, CloseHandle
@@ -13,6 +14,7 @@ import hashlib
 
 req = requests.Session()
 
+printMaxChar = 0
 def printProgress(message):
     global printMaxChar
     printMaxChar = max(printMaxChar, len(message))
@@ -56,26 +58,33 @@ class yikeENV():
             result.append(yikePhoto(i, self.cookies, self.bdstoken))
         return result
 
-    def __list__(self, method, extra = ""):
+    def __list_once__(self, method, extra = "", start = 0):
         url = 'https://photo.baidu.com/youai/file/v1/' + method + '?' \
             + 'clienttype=70' \
             + '&bdstoken=' + self.bdstoken \
             + extra
         l = []
-        i = 0
-        while True:
-            result = req.get(url + self.__cursor__(i, self.limit),
-                            cookies=self.cookies, headers=self.ua).json()
-            if 'list' not in result: # r['errno'] == 2, no more result
-                break
-            tmp = result['list']
-            if tmp == []:
-                break
-            l += tmp
-            i += self.limit
+        resp = req.get(url + self.__cursor__(start, self.limit),
+                        cookies=self.cookies, headers=self.ua).json()
+        if 'list' not in resp: # r['errno'] == 2, no more result
+            l = []
+        else:
+            l = resp['list']
         result = []
         for i in l:
             result.append(yikePhoto(i, self.cookies, self.bdstoken))
+        return result, start + self.limit
+
+    def __list__(self, method, extra = ""):
+        i = 0
+        result = []
+        while True:
+            resp, newStart = self.__list_once__(method, extra, i)
+            if resp == []:
+                break
+            else:
+                result += resp
+                i = newStart
         return result
 
     def __fo__(self, method, list):
@@ -121,6 +130,9 @@ class yikeENV():
     def getall(self):
         return self.__list__('list')
 
+    def getallonce(self, start = 0):
+        return self.__list_once__('list', '', start)
+
     def getrecycled(self):
         return self.__list__('listrecycle')
 
@@ -154,6 +166,14 @@ class yikePhoto:
         self.ctime = js['ctime']
         self.mtime = js['mtime']
         #self.shoot_time = js['shoot_time']
+        self.md5 = js['md5']
+        #self.server_md5 = js['server_md5']
+        self.path = js['path'] # server_path, '/youa/web/filename.png'
+        self.category = js['category']
+        #self.face_info = js['face_info'] # {}
+        #self.ext_status = js['ext_status'] #=1 如果有加入相册
+        self.size = js['size'] #字节
+        self.tags = js['tags']
         self.cookies = cookies
         self.bdstoken = str(bdstoken)
         self.ua = {
@@ -175,9 +195,9 @@ class yikePhoto:
         #T = Time(time.mktime(Time_t))
         #SetFileTime(fh, T, T, T)
         try:
-            SetFileTime(fh, Time(ctime), Time(mtime), Time(time.time())) # must be a pywintypes time object
+            SetFileTime(fh, Time(ctime), Time(time.time()), Time(mtime)) # must be a pywintypes time object
         except Exception as e:
-            print('[Error] __modifyFileTime__ for ' + filePath + ' to ' + time.strptime(mtime, '%Y:%m:%d %H:%M:%S'))
+            print('\n[Error] __modifyFileTime__ for ' + filePath + ' to ' + time.strptime(mtime, '%Y:%m:%d %H:%M:%S'))
             #print(traceback.format_exc())
             raise
         finally:
@@ -198,10 +218,16 @@ class yikePhoto:
                 + 'clienttype=70' \
                 + '&bdstoken=' + self.bdstoken \
                 + '&fsid=' + self.fsid
-            return req.get(url, cookies=self.cookies, headers=self.ua).json()['dlink']
+            resp = req.get(url, cookies=self.cookies, headers=self.ua)
+            if not resp.ok or not 'dlink' in resp.text: # 网络故障或服务器限制
+                 raise KeyError
+                #print('\n[Error]', resp.ok, resp.text)
+                #return ''
+            return resp.json()['dlink']
         except Exception as e:
-            print('[Error] Failed to get download link of photo with fsid ' + self.fsid)
+            print('\n[Error] Failed to get download link of photo with fsid ' + self.fsid)
             print(traceback.format_exc())
+            return ''
 
     def exif(self):
         url = 'https://photo.baidu.com/youai/file/v1/exif?' \
@@ -220,6 +246,8 @@ class yikePhoto:
     def dl(self, workdir):
         try:
             url = self.getdl()
+            if url == '':
+                raise KeyError
             r = req.get(url, stream=True, headers=self.ua)
             filename = ''
             if 'Content-Disposition' in r.headers and r.headers['Content-Disposition']:
@@ -233,19 +261,25 @@ class yikePhoto:
                 filename = os.path.basename(url).split("?")[0]
             if not filename:
                 raise ValueError()
+            if filename == "温馨提示.txt": # 已屏蔽。跳过，避免反复写入和多线程写入冲突
+                return
             filename = filename.strip('"')
-            filePath = workdir + filename
+            filePath = os.path.abspath(os.path.join(workdir, filename))
             if(os.path.isfile(filePath) and 
                 'Content-Length' in r.headers and r.headers['Content-Length'] and
                 'Content-MD5' in r.headers and r.headers['Content-MD5']): # sometime KeyError: 'content-length'
                 if(os.path.getsize(filePath) != int(r.headers['Content-Length']) or 
                     self.__md5__(filePath) != r.headers['Content-MD5']):
+                    # 考虑避免误覆盖已有或已损坏文件。
+                    # 触发罕见。一刻服务器保存文件时可能会自动重命名同名文件。
+                    # FIXME 多线程冲突的可能？
+                    # time.sleep(2) # 避免杀软占用
                     filePath_ = os.path.splitext(filePath)
-                    oldFileNewPath = filePath_[0] + 'old.' + str(int(time.time())) + filePath_[1]
+                    oldFileNewPath = filePath_[0] + '.old.' + str(int(time.time())) + filePath_[1]
                     os.rename(filePath, oldFileNewPath)
                 else:
                     printProgress(os.path.basename(filePath) + ' already exists.')
-                    # self.__modifyFileTime__(filePath)
+                    # self.__modifyFileTime__(filePath) # 禁用此行，如果不需强制更新文件时间
                     return
 
             file = open(filePath, 'wb')
@@ -256,6 +290,9 @@ class yikePhoto:
             self.__modifyFileTime__(filePath)
             printProgress(os.path.basename(filePath) + ' done.')
         except Exception as e:
-            print('[Error] Error downloading photo with fsid ', self.fsid)
-            print('The file path: ', filePath)
+            print('\n[Error] Error downloading photo with fsid ', self.fsid)
+            #print('The file path:', filePath) # local variable 'filePath' referenced before assignment
             print(traceback.format_exc())
+        except KeyboardInterrupt as e: # FIXME
+            print('\n[Exit] Keyboard interrupt. The last file:', filePath, "The fsid:", self.fsid)
+            sys.exit()

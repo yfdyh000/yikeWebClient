@@ -11,6 +11,22 @@
             "program": "${workspaceFolder}/dl.py",
             "console": "integratedTerminal",
             "justMyCode": true
+        },
+        {
+            "name": "Python: dl_all.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dl_all.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: dl_all_fast.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dl_all_fast.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
         }
     ]
 }
