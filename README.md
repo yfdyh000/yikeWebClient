@@ -1,4 +1,17 @@
 ## 这是一个开源的百度一刻相册客户端，仅供学习使用，通过逆向网页版API实现；并遵循[GPL-3.0 license](https://github.com/hexin-lin-1024/yikeWebClientPython/blob/main/LICENSE)。  
+
+### Fork说明
+
+文档有待更新。
+
+开发迭代顺序（越后越新，功能和代码逻辑越全，但也更复杂）：dl.py、dl_all.py、dl_all_fast.py、dl_all_in_album.py。
+
+### 拓展阅读
+
+1. https://alist-doc.nn.ci/docs/driver/baidu.photo
+2. https://github.com/alist-org/alist/tree/main/drivers/baidu_photo
+3. https://photo.baidu.com/union/doc/jksjzuv5r
+
 ### 走过路过，不要错过。只要您是在研究一刻相册网页版的API，[Wiki](https://github.com/hexin-lin-1024/yikeWebClientPython/wiki) 里的东西您就大概率会感兴趣。  
 
 |依赖|  
@@ -7,6 +20,9 @@
 |pywin32  
 |Python3|
   
+`pip3 install requests`
+`pip3 install pywin32` (备选 `py -3 -m pip install pywin32` 或 `python3 -m pip install pywin32` 或 `python -m pip install pywin32`)
+
 ### 使用教程：
 引入：`from yike import *`，  
 并实例化`yi = yikeENV(cookies, bdstoken)`。  

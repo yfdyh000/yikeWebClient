@@ -1,4 +1,3 @@
-from cmath import inf
 from yike import *
 
 dldir = "D:/yikedl/all"

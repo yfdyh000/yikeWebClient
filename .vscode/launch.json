@@ -27,6 +27,14 @@
             "program": "${workspaceFolder}/dl_all_fast.py",
             "console": "integratedTerminal",
             "justMyCode": true
+        },
+        {
+            "name": "Python: dl_all_in_album.py",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/dl_all_in_album.py",
+            "console": "integratedTerminal",
+            "justMyCode": true
         }
     ]
 }

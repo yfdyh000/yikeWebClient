@@ -1,9 +1,8 @@
-from cmath import inf
 from yike import *
 import concurrent.futures
 from threading import Lock
 
-CONNECTIONS = 3
+CONNECTIONS = 4
 #TIMEOUT = 30
 
 def dl_sub(i, dldir, lock):
